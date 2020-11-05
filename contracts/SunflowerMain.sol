@@ -194,7 +194,7 @@ contract SunflowerMain is Ownable {
         uint256 lpSupply = pool.lpToken.balanceOf(address(this));
         if (block.number > pool.lastRewardBlock && lpSupply != 0) {
             uint256 blockRewards = getBlockRewards(pool.lastRewardBlock, block.number);
-            uint256 sunflowerReward = blockRewards.mul(pool.allocPoint).div(totalAllocPoint);
+            uint256 sunflowerReward = blockRewards.mul(9).div(10).mul(pool.allocPoint).div(totalAllocPoint);
             accSunflowerPerShare = accSunflowerPerShare.add(sunflowerReward.mul(1e12).div(lpSupply));
         }
         return user.amount.mul(accSunflowerPerShare).div(1e12).sub(user.rewardDebt);
@@ -222,8 +222,9 @@ contract SunflowerMain is Ownable {
         uint256 blockRewards = getBlockRewards(pool.lastRewardBlock, block.number);
         uint256 sunflowerReward = blockRewards.mul(pool.allocPoint).div(totalAllocPoint);
         sunflower.mint(devaddr, sunflowerReward.div(10));
-        sunflower.mint(address(this), sunflowerReward.mul(9).div(10));
-        pool.accSunflowerPerShare = pool.accSunflowerPerShare.add(sunflowerReward.mul(1e12).div(lpSupply));
+        uint256 userRewards = sunflowerReward.mul(9).div(10);
+        sunflower.mint(address(this), userRewards);
+        pool.accSunflowerPerShare = pool.accSunflowerPerShare.add(userRewards.mul(1e12).div(lpSupply));
         pool.lastRewardBlock = block.number;
     }
 
@@ -268,7 +269,6 @@ contract SunflowerMain is Ownable {
     // Withdraw without caring about rewards. EMERGENCY ONLY.
     function emergencyWithdraw(uint256 _pid) public {
         PoolInfo storage pool = poolInfo[_pid];
-        require(pool.lock == false || pool.lock && sunflower.totalSupply() >= halfPeriod);
         UserInfo storage user = userInfo[_pid][msg.sender];
         pool.lpToken.safeTransfer(address(msg.sender), user.amount);
         emit EmergencyWithdraw(msg.sender, _pid, user.amount);
