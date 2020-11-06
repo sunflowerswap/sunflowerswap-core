@@ -107,14 +107,14 @@ contract SunflowerMainV2 is Ownable {
         pcc = _pcc;
     }
 
-    function getPccBalanceV1() external view returns (uint256) {
+    function getPccBalanceV1() public view returns (uint256) {
         if(sunflower.totalSupply() >=  halfPeriod && poolInfo[3].allocPoint == 0){
             return 0;
         }
         return pcc.balanceOf(address(sunflowerMainV1));
     }
 
-    function getAmountV1(address _account) external view returns (uint256) {
+    function getAmountV1(address _account) public view returns (uint256) {
         if(sunflower.totalSupply() >=  halfPeriod && poolInfo[3].allocPoint == 0){
             return 0;
         }
@@ -145,7 +145,8 @@ contract SunflowerMainV2 is Ownable {
             allocPoint: _allocPoint,
             lastRewardBlock: lastRewardBlock,
             accSunflowerPerShare: 0,
-            lock: _lock
+            lock: _lock,
+            totalAmount: 0
         }));
     }
 
