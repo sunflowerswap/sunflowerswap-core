@@ -20,6 +20,10 @@ interface IMigrator {
     function migrate(IERC20 token) external returns (IERC20);
 }
 
+interface ISunflowerMainV1 {
+    function userInfo(uint256 pid, address account) external view returns (uint256);
+}
+
 // SunflowerMain is the master of Sunflower. He can make Sunflower and he is a fair guy.
 //
 // Note that it's ownable and the owner wields tremendous power. The ownership
@@ -27,7 +31,7 @@ interface IMigrator {
 // distributed and the community can show to govern itself.
 //
 // Have fun reading it. Hopefully it's bug-free. God bless.
-contract SunflowerMain is Ownable {
+contract SunflowerMainV2 is Ownable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -56,6 +60,7 @@ contract SunflowerMain is Ownable {
         uint256 accSunflowerPerShare; // Accumulated SFRs per share, times 1e12. See below.
         // Lock LP, until the end of mining.
         bool lock;
+        uint256 totalAmount;
     }
 
     // The SFR TOKEN!
@@ -77,6 +82,9 @@ contract SunflowerMain is Ownable {
     uint256 public halfPeriod;
     uint256 public maxSupply;
 
+    ISunflowerMainV1 public sunflowerMainV1;
+    IERC20 public pcc;
+
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
@@ -86,18 +94,37 @@ contract SunflowerMain is Ownable {
         address _devaddr,
         uint256 _startBlock,
         uint256 _halfPeriod,
-        uint256 _maxSupply
+        uint256 _maxSupply,
+        ISunflowerMainV1 _sunflowerMainV1,
+        IERC20 _pcc
     ) public {
         sunflower = _sunflower;
         devaddr = _devaddr;
         startBlock = _startBlock;
         halfPeriod = _halfPeriod;
         maxSupply = _maxSupply;
+        sunflowerMainV1 = _sunflowerMainV1;
+        pcc = _pcc;
+    }
+
+    function getPccBalanceV1() external view returns (uint256) {
+        if(sunflower.totalSupply() >=  halfPeriod && poolInfo[3].allocPoint == 0){
+            return 0;
+        }
+        return pcc.balanceOf(address(sunflowerMainV1));
+    }
+
+    function getAmountV1(address _account) external view returns (uint256) {
+        if(sunflower.totalSupply() >=  halfPeriod && poolInfo[3].allocPoint == 0){
+            return 0;
+        }
+        return sunflowerMainV1.userInfo(3, _account);
     }
 
     function poolLength() external view returns (uint256) {
         return poolInfo.length;
     }
+
 
     function setStartBlock(uint256 _startBlock) public onlyOwner {
         require(block.number < startBlock);
@@ -191,13 +218,23 @@ contract SunflowerMain is Ownable {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][_user];
         uint256 accSunflowerPerShare = pool.accSunflowerPerShare;
-        uint256 lpSupply = pool.lpToken.balanceOf(address(this));
-        if (block.number > pool.lastRewardBlock && lpSupply != 0) {
-            uint256 blockRewards = getBlockRewards(pool.lastRewardBlock, block.number);
-            uint256 sunflowerReward = blockRewards.mul(9).div(10).mul(pool.allocPoint).div(totalAllocPoint);
-            accSunflowerPerShare = accSunflowerPerShare.add(sunflowerReward.mul(1e12).div(lpSupply));
+        if(_pid == 3){
+            uint256 lpSupply = pool.totalAmount.add(getPccBalanceV1());
+            if (block.number > pool.lastRewardBlock && lpSupply != 0 && sunflower.totalSupply() < halfPeriod) {
+                uint256 blockRewards = getBlockRewards(pool.lastRewardBlock, block.number);
+                uint256 sunflowerReward = blockRewards.mul(9).div(10).mul(pool.allocPoint).div(totalAllocPoint);
+                accSunflowerPerShare = accSunflowerPerShare.add(sunflowerReward.mul(1e12).div(lpSupply));
+            }
+            return user.amount.add(getAmountV1(_user)).mul(accSunflowerPerShare).div(1e12).sub(user.rewardDebt);
+        }else{
+            uint256 lpSupply = pool.totalAmount;
+            if (block.number > pool.lastRewardBlock && lpSupply != 0) {
+                uint256 blockRewards = getBlockRewards(pool.lastRewardBlock, block.number);
+                uint256 sunflowerReward = blockRewards.mul(9).div(10).mul(pool.allocPoint).div(totalAllocPoint);
+                accSunflowerPerShare = accSunflowerPerShare.add(sunflowerReward.mul(1e12).div(lpSupply));
+            }
+            return user.amount.mul(accSunflowerPerShare).div(1e12).sub(user.rewardDebt);
         }
-        return user.amount.mul(accSunflowerPerShare).div(1e12).sub(user.rewardDebt);
     }
 
     // Update reward variables for all pools. Be careful of gas spending!
@@ -214,7 +251,10 @@ contract SunflowerMain is Ownable {
         if (block.number <= pool.lastRewardBlock) {
             return;
         }
-        uint256 lpSupply = pool.lpToken.balanceOf(address(this));
+        uint256 lpSupply = pool.totalAmount;
+        if(_pid == 3){
+            lpSupply = lpSupply.add(getPccBalanceV1());
+        }
         if (lpSupply == 0) {
             pool.lastRewardBlock = block.number;
             return;
@@ -233,8 +273,12 @@ contract SunflowerMain is Ownable {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         updatePool(_pid);
-        if (user.amount > 0) {
-            uint256 pending = user.amount.mul(pool.accSunflowerPerShare).div(1e12).sub(user.rewardDebt);
+        uint256 userAmount = user.amount;
+        if(_pid == 3){
+            userAmount = userAmount.add(getAmountV1(msg.sender));
+        }
+        if (userAmount > 0) {
+            uint256 pending = userAmount.mul(pool.accSunflowerPerShare).div(1e12).sub(user.rewardDebt);
             if(pending > 0) {
                 safeSunflowerTransfer(msg.sender, pending);
             }
@@ -242,8 +286,10 @@ contract SunflowerMain is Ownable {
         if(_amount > 0) {
             pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
             user.amount = user.amount.add(_amount);
+            userAmount = userAmount.add(_amount);
+            pool.totalAmount = pool.totalAmount.add(_amount);
         }
-        user.rewardDebt = user.amount.mul(pool.accSunflowerPerShare).div(1e12);
+        user.rewardDebt = userAmount.mul(pool.accSunflowerPerShare).div(1e12);
         emit Deposit(msg.sender, _pid, _amount);
     }
 
@@ -254,21 +300,28 @@ contract SunflowerMain is Ownable {
         UserInfo storage user = userInfo[_pid][msg.sender];
         require(user.amount >= _amount, "withdraw: not good");
         updatePool(_pid);
-        uint256 pending = user.amount.mul(pool.accSunflowerPerShare).div(1e12).sub(user.rewardDebt);
+        uint256 userAmount = user.amount;
+        if(_pid == 3){
+            userAmount = userAmount.add(getAmountV1(msg.sender));
+        }
+        uint256 pending = userAmount.mul(pool.accSunflowerPerShare).div(1e12).sub(user.rewardDebt);
         if(pending > 0) {
             safeSunflowerTransfer(msg.sender, pending);
         }
         if(_amount > 0) {
             user.amount = user.amount.sub(_amount);
+            userAmount = userAmount.sub(_amount);
+            pool.totalAmount = pool.totalAmount.sub(_amount);
             pool.lpToken.safeTransfer(address(msg.sender), _amount);
         }
-        user.rewardDebt = user.amount.mul(pool.accSunflowerPerShare).div(1e12);
+        user.rewardDebt = userAmount.mul(pool.accSunflowerPerShare).div(1e12);
         emit Withdraw(msg.sender, _pid, _amount);
     }
 
     // Withdraw without caring about rewards. EMERGENCY ONLY.
     function emergencyWithdraw(uint256 _pid) public {
         PoolInfo storage pool = poolInfo[_pid];
+        require(pool.lock == false || pool.lock && sunflower.totalSupply() >= halfPeriod);
         UserInfo storage user = userInfo[_pid][msg.sender];
         pool.lpToken.safeTransfer(address(msg.sender), user.amount);
         emit EmergencyWithdraw(msg.sender, _pid, user.amount);
