@@ -7,19 +7,6 @@ import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./SunflowerToken.sol";
 
-interface IMigrator {
-    // Perform LP token migration from legacy UniswapV2 to SunflowerSwap.
-    // Take the current LP token address and return the new LP token address.
-    // Migrator should have full access to the caller's LP token.
-    // Return the new LP token address.
-    //
-    // XXX Migrator must have allowance access to UniswapV2 LP tokens.
-    // SunflowerSwap must mint EXACTLY the same amount of SunflowerSwap LP tokens or
-    // else something bad will happen. Traditional UniswapV2 does not
-    // do that so be careful!
-    function migrate(IERC20 token) external returns (IERC20);
-}
-
 interface ISunflowerMainV1 {
     function userInfo(uint256 pid, address account) external view returns (uint256);
 }
@@ -67,9 +54,6 @@ contract SunflowerMainV2 is Ownable {
     SunflowerToken public sunflower;
     // Dev address.
     address public devaddr;
-    // SFR tokens created per block.
-    // The migrator contract. It has a lot of power. Can only be set through governance (owner).
-    IMigrator public migrator;
 
     // Info of each pool.
     PoolInfo[] public poolInfo;
@@ -157,23 +141,6 @@ contract SunflowerMainV2 is Ownable {
         }
         totalAllocPoint = totalAllocPoint.sub(poolInfo[_pid].allocPoint).add(_allocPoint);
         poolInfo[_pid].allocPoint = _allocPoint;
-    }
-
-    // Set the migrator contract. Can only be called by the owner.
-    function setMigrator(IMigrator _migrator) public onlyOwner {
-        migrator = _migrator;
-    }
-
-    // Migrate lp token to another lp contract. Can be called by anyone. We trust that migrator contract is good.
-    function migrate(uint256 _pid) public {
-        require(address(migrator) != address(0), "migrate: no migrator");
-        PoolInfo storage pool = poolInfo[_pid];
-        IERC20 lpToken = pool.lpToken;
-        uint256 bal = lpToken.balanceOf(address(this));
-        lpToken.safeApprove(address(migrator), bal);
-        IERC20 newLpToken = migrator.migrate(lpToken);
-        require(bal == newLpToken.balanceOf(address(this)), "migrate: bad");
-        pool.lpToken = newLpToken;
     }
 
     function getBlockRewardNow() public view returns (uint256) {
